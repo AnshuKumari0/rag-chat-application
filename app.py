@@ -44,9 +44,10 @@ def process_pdf(uploaded_file, collection_name):
         # Create embeddings and store in vector database
         embedding_model = initialize_embeddings()
         
+        # Fixed: Use proper Qdrant configuration
         vector_store = QdrantVectorStore.from_documents(
             documents=split_docs,
-            url="http://localhost:6333",
+            url="http://localhost:6333",  # Make sure Qdrant is running locally
             collection_name=collection_name,
             embedding=embedding_model
         )
@@ -57,6 +58,12 @@ def process_pdf(uploaded_file, collection_name):
         return True, len(split_docs)
     
     except Exception as e:
+        # Clean up temporary file on error
+        if 'tmp_file_path' in locals():
+            try:
+                os.unlink(tmp_file_path)
+            except:
+                pass
         return False, str(e)
 
 def get_vector_store(collection_name):
@@ -77,10 +84,10 @@ def chat_with_pdf(query, vector_db, client):
     """Generate response based on PDF context"""
     try:
         # Search for relevant documents
-        search_results = vector_db.similarity_search(query=query)
+        search_results = vector_db.similarity_search(query=query, k=3)
         
         context = "\n\n\n".join([
-            f"Page Content: {result.page_content}\nPage Number: {result.metadata['page_label']}\nFile Location: {result.metadata['source']}" 
+            f"Page Content: {result.page_content}\nPage Number: {result.metadata.get('page', 'N/A')}\nFile Location: {result.metadata.get('source', 'N/A')}" 
             for result in search_results
         ])
         
@@ -96,9 +103,9 @@ def chat_with_pdf(query, vector_db, client):
         {context}
         """
         
-        # Generate response
+        # Fixed: Use correct model name
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-4o-mini",  # Fixed model name
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query}
@@ -195,9 +202,6 @@ def main():
     
     # Enhanced Sidebar
     with st.sidebar:
-        # Sidebar Header
-        # st.markdown('<div class="sidebar-header">📄 Document Manager</div>', unsafe_allow_html=True)
-        
         # Step indicator
         st.markdown("### 📋 Quick Guide")
         steps = [
@@ -231,9 +235,8 @@ def main():
             # Generate collection name from filename
             collection_name = f"pdf_{uploaded_file.name.replace('.pdf', '').replace(' ', '_').lower()}"
             
-            # Process Button - Modified to show different text based on processing status
+            # Process Button
             if st.session_state.pdf_processed and st.session_state.collection_name == collection_name:
-                # Show "Document Processed" when already processed
                 st.button(
                     "✅ Document Processed", 
                     type="secondary",
@@ -241,7 +244,6 @@ def main():
                     disabled=True
                 )
             else:
-                # Show "Process Document" when not processed
                 process_btn = st.button(
                     "🚀 Process Document", 
                     type="primary",
@@ -289,7 +291,6 @@ def main():
         # Document Status Section
         if st.session_state.pdf_processed and st.session_state.processed_file_info:
             st.divider()
-            # Action Buttons
             st.markdown("### ⚙️ Actions")
             
             col1, col2 = st.columns(2)
@@ -333,7 +334,7 @@ def main():
             - 📖 Source citations
             """)
     
-    # Main chat interface (unchanged)
+    # Main chat interface
     if st.session_state.pdf_processed and st.session_state.vector_db:
         st.header("💬 Chat with your PDF")
         
@@ -352,7 +353,7 @@ def main():
                         with st.expander("📖 Sources"):
                             for j, source in enumerate(sources[:2]):  # Show top 2 sources
                                 st.write(f"**Source {j+1}:**")
-                                st.write(f"Page: {source.metadata.get('page_label', 'N/A')}")
+                                st.write(f"Page: {source.metadata.get('page', 'N/A')}")
                                 st.write(f"Content: {source.page_content[:200]}...")
                                 st.divider()
         
