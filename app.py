@@ -22,70 +22,7 @@ def initialize_openai():
 def initialize_embeddings():
     return OpenAIEmbeddings(model="text-embedding-3-large")
 
-def test_qdrant_connection():
-    """Test Qdrant database connection"""
-    try:
-        from qdrant_client import QdrantClient
-        
-        # Get connection details from environment
-        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-        qdrant_api_key = os.getenv("QDRANT_API_KEY")
-        
-        # Create client
-        if qdrant_api_key:
-            client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
-        else:
-            client = QdrantClient(url=qdrant_url)
-        
-        # Test connection by getting collections
-        collections = client.get_collections()
-        
-        return True, f"✅ Connected successfully! Found {len(collections.collections)} collections."
-    
-    except Exception as e:
-        return False, f"❌ Connection failed: {str(e)}"
 
-def add_connection_test_to_sidebar():
-    """Add connection test button to sidebar"""
-    st.markdown("### 🔌 Database Status")
-    
-    if st.button("Test Connection", use_container_width=True):
-        with st.spinner("Testing connection..."):
-            success, message = test_qdrant_connection()
-            
-            if success:
-                st.success(message)
-            else:
-                st.error(message)
-                
-                # Show helpful debug info
-                st.markdown("**Debug Info:**")
-                st.code(f"""
-QDRANT_URL: {os.getenv("QDRANT_URL", "Not set")}
-QDRANT_API_KEY: {"Set" if os.getenv("QDRANT_API_KEY") else "Not set"}
-OPENAI_API_KEY: {"Set" if os.getenv("OPENAI_API_KEY") else "Not set"}
-                """)
-    
-    # Show current environment status
-    qdrant_url = os.getenv("QDRANT_URL")
-    qdrant_api_key = os.getenv("QDRANT_API_KEY")
-    openai_key = os.getenv("OPENAI_API_KEY")
-    
-    if qdrant_url and qdrant_api_key and openai_key:
-        st.success("🟢 All environment variables configured")
-    else:
-        missing = []
-        if not qdrant_url:
-            missing.append("QDRANT_URL")
-        if not qdrant_api_key:
-            missing.append("QDRANT_API_KEY")
-        if not openai_key:
-            missing.append("OPENAI_API_KEY")
-        
-        if missing:
-            st.error(f"🔴 Missing: {', '.join(missing)}")
-        else:
-            st.warning("🟡 Some configuration issues detected")
 
 def process_pdf(uploaded_file, collection_name):
     """Process uploaded PDF and store in vector database"""
@@ -281,11 +218,6 @@ def main():
         
         st.divider()
         
-        # Add connection test
-        add_connection_test_to_sidebar()
-        
-        st.divider()
-        
         # File Upload Section
         st.markdown("### 📁 Upload Document")
         
@@ -417,11 +349,6 @@ def main():
             - 📄 Page references
             - 💬 Conversation memory
             - 📖 Source citations
-            
-            **Environment Setup:**
-            - Ensure QDRANT_URL is set
-            - Ensure QDRANT_API_KEY is set
-            - Ensure OPENAI_API_KEY is set
             """)
     
     # Main chat interface
@@ -441,7 +368,7 @@ def main():
                     # Show sources
                     if sources:
                         with st.expander("📖 Sources"):
-                            for j, source in enumerate(sources[:2]):  # Show top 2 sources
+                            for j, source in enumerate(sources[:1]):  # Show top 1 sources
                                 st.write(f"**Source {j+1}:**")
                                 st.write(f"Page: {source.metadata.get('page_label', 'N/A')}")
                                 st.write(f"Content: {source.page_content[:200]}...")
