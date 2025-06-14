@@ -22,6 +22,71 @@ def initialize_openai():
 def initialize_embeddings():
     return OpenAIEmbeddings(model="text-embedding-3-large")
 
+def test_qdrant_connection():
+    """Test Qdrant database connection"""
+    try:
+        from qdrant_client import QdrantClient
+        
+        # Get connection details from environment
+        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+        qdrant_api_key = os.getenv("QDRANT_API_KEY")
+        
+        # Create client
+        if qdrant_api_key:
+            client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+        else:
+            client = QdrantClient(url=qdrant_url)
+        
+        # Test connection by getting collections
+        collections = client.get_collections()
+        
+        return True, f"✅ Connected successfully! Found {len(collections.collections)} collections."
+    
+    except Exception as e:
+        return False, f"❌ Connection failed: {str(e)}"
+
+def add_connection_test_to_sidebar():
+    """Add connection test button to sidebar"""
+    st.markdown("### 🔌 Database Status")
+    
+    if st.button("Test Connection", use_container_width=True):
+        with st.spinner("Testing connection..."):
+            success, message = test_qdrant_connection()
+            
+            if success:
+                st.success(message)
+            else:
+                st.error(message)
+                
+                # Show helpful debug info
+                st.markdown("**Debug Info:**")
+                st.code(f"""
+QDRANT_URL: {os.getenv("QDRANT_URL", "Not set")}
+QDRANT_API_KEY: {"Set" if os.getenv("QDRANT_API_KEY") else "Not set"}
+OPENAI_API_KEY: {"Set" if os.getenv("OPENAI_API_KEY") else "Not set"}
+                """)
+    
+    # Show current environment status
+    qdrant_url = os.getenv("QDRANT_URL")
+    qdrant_api_key = os.getenv("QDRANT_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    
+    if qdrant_url and qdrant_api_key and openai_key:
+        st.success("🟢 All environment variables configured")
+    else:
+        missing = []
+        if not qdrant_url:
+            missing.append("QDRANT_URL")
+        if not qdrant_api_key:
+            missing.append("QDRANT_API_KEY")
+        if not openai_key:
+            missing.append("OPENAI_API_KEY")
+        
+        if missing:
+            st.error(f"🔴 Missing: {', '.join(missing)}")
+        else:
+            st.warning("🟡 Some configuration issues detected")
+
 def process_pdf(uploaded_file, collection_name):
     """Process uploaded PDF and store in vector database"""
     try:
@@ -44,10 +109,11 @@ def process_pdf(uploaded_file, collection_name):
         # Create embeddings and store in vector database
         embedding_model = initialize_embeddings()
         
-        # Fixed: Use proper Qdrant configuration
+        # ✅ Fixed: Use environment variables consistently
         vector_store = QdrantVectorStore.from_documents(
             documents=split_docs,
-            url="http://localhost:6333",  # Make sure Qdrant is running locally
+            url=os.getenv("QDRANT_URL", "http://localhost:6333"),
+            api_key=os.getenv("QDRANT_API_KEY"),
             collection_name=collection_name,
             embedding=embedding_model
         )
@@ -58,12 +124,6 @@ def process_pdf(uploaded_file, collection_name):
         return True, len(split_docs)
     
     except Exception as e:
-        # Clean up temporary file on error
-        if 'tmp_file_path' in locals():
-            try:
-                os.unlink(tmp_file_path)
-            except:
-                pass
         return False, str(e)
 
 def get_vector_store(collection_name):
@@ -71,7 +131,8 @@ def get_vector_store(collection_name):
     try:
         embedding_model = initialize_embeddings()
         vector_db = QdrantVectorStore.from_existing_collection(
-            url="http://localhost:6333",
+            url=os.getenv("QDRANT_URL", "http://localhost:6333"),
+            api_key=os.getenv("QDRANT_API_KEY"),
             collection_name=collection_name,
             embedding=embedding_model
         )
@@ -84,10 +145,10 @@ def chat_with_pdf(query, vector_db, client):
     """Generate response based on PDF context"""
     try:
         # Search for relevant documents
-        search_results = vector_db.similarity_search(query=query, k=3)
+        search_results = vector_db.similarity_search(query=query)
         
         context = "\n\n\n".join([
-            f"Page Content: {result.page_content}\nPage Number: {result.metadata.get('page', 'N/A')}\nFile Location: {result.metadata.get('source', 'N/A')}" 
+            f"Page Content: {result.page_content}\nPage Number: {result.metadata['page_label']}\nFile Location: {result.metadata['source']}" 
             for result in search_results
         ])
         
@@ -103,7 +164,7 @@ def chat_with_pdf(query, vector_db, client):
         {context}
         """
         
-        # Fixed: Use correct model name
+        # Generate response
         response = client.chat.completions.create(
             model="gpt-4o-mini",  # Fixed model name
             messages=[
@@ -198,7 +259,11 @@ def main():
         st.session_state.processed_file_info = None
     
     # Initialize clients
-    client = initialize_openai()
+    try:
+        client = initialize_openai()
+    except Exception as e:
+        st.error(f"Failed to initialize OpenAI client: {e}")
+        st.stop()
     
     # Enhanced Sidebar
     with st.sidebar:
@@ -213,6 +278,11 @@ def main():
         for emoji, step, completed in steps:
             status_icon = "✅" if completed else "⏳"
             st.markdown(f"{emoji} {step} {status_icon}")
+        
+        st.divider()
+        
+        # Add connection test
+        add_connection_test_to_sidebar()
         
         st.divider()
         
@@ -232,11 +302,14 @@ def main():
             # File Information Card
             file_size = len(uploaded_file.getvalue())
             
+            st.info(f"📄 **{uploaded_file.name}**\n📏 Size: {format_file_size(file_size)}")
+            
             # Generate collection name from filename
             collection_name = f"pdf_{uploaded_file.name.replace('.pdf', '').replace(' ', '_').lower()}"
             
-            # Process Button
+            # Process Button - Modified to show different text based on processing status
             if st.session_state.pdf_processed and st.session_state.collection_name == collection_name:
+                # Show "Document Processed" when already processed
                 st.button(
                     "✅ Document Processed", 
                     type="secondary",
@@ -244,6 +317,7 @@ def main():
                     disabled=True
                 )
             else:
+                # Show "Process Document" when not processed
                 process_btn = st.button(
                     "🚀 Process Document", 
                     type="primary",
@@ -291,6 +365,17 @@ def main():
         # Document Status Section
         if st.session_state.pdf_processed and st.session_state.processed_file_info:
             st.divider()
+            
+            # Show processed document info
+            info = st.session_state.processed_file_info
+            st.markdown("### 📊 Document Info")
+            st.success(f"""
+            **File:** {info['name']}
+            **Size:** {info['size']}
+            **Chunks:** {info['chunks']}
+            """)
+            
+            # Action Buttons
             st.markdown("### ⚙️ Actions")
             
             col1, col2 = st.columns(2)
@@ -332,6 +417,11 @@ def main():
             - 📄 Page references
             - 💬 Conversation memory
             - 📖 Source citations
+            
+            **Environment Setup:**
+            - Ensure QDRANT_URL is set
+            - Ensure QDRANT_API_KEY is set
+            - Ensure OPENAI_API_KEY is set
             """)
     
     # Main chat interface
@@ -353,7 +443,7 @@ def main():
                         with st.expander("📖 Sources"):
                             for j, source in enumerate(sources[:2]):  # Show top 2 sources
                                 st.write(f"**Source {j+1}:**")
-                                st.write(f"Page: {source.metadata.get('page', 'N/A')}")
+                                st.write(f"Page: {source.metadata.get('page_label', 'N/A')}")
                                 st.write(f"Content: {source.page_content[:200]}...")
                                 st.divider()
         
